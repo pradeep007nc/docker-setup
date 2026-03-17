@@ -1,0 +1,13 @@
+target/
+!.mvn/wrapper/maven-wrapper.jar
+.DS_Store
+.mvn/
+.idea/
+.vscode/
+.git/
+.env
+.gitignore
+.gitattributes
+HELP.md
+mvnw
+mvnw.cmd
