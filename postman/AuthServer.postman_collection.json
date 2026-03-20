@@ -1,0 +1,1129 @@
+{
+  "info": {
+    "name": "Auth Server - dockerbackend",
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "description": "Centralized OAuth2/JWT auth server — covers password login, OTP login, token expiry, login audit, user disable/enable, and cross-service isolation.\n\n---\n**Quick Start:**\n1. `baseUrl` defaults to `http://localhost:8080`\n2. Run any Login request — token auto-saves to `{{currentToken}}`\n3. All protected requests pick up `{{currentToken}}` automatically\n\n---\n**Pre-seeded users (DataInitializer):**\n| User | Password | Service | Roles | Key Permissions |\n|---|---|---|---|---|\n| alice | password123 | service-a | ROLE_ADMIN | READ/WRITE/DELETE_ORDERS |\n| bob | password123 | service-a | ROLE_USER | READ_ORDERS only |\n| charlie | password123 | service-b | ROLE_ADMIN | READ_REPORTS + READ/MANAGE/DELETE_USERS |\n| diana | password123 | service-b | ROLE_USER | READ_REPORTS + READ_USERS only |\n\n---\n**Login response shape:**\n```json\n{\n  \"accessToken\": \"<jwt>\",\n  \"tokenType\": \"Bearer\",\n  \"authMethod\": \"PASSWORD\",\n  \"expiresAt\": \"2026-03-19T...\",\n  \"serviceId\": \"service-a\",\n  \"roles\": [\"ROLE_ADMIN\"],\n  \"permissions\": [\"READ_ORDERS\", ...]\n}\n```\n\n**Token error codes (from filter):**\n- `TOKEN_EXPIRED` — token signature valid, but past expiry → must re-login\n- `INVALID_TOKEN` — signature mismatch / tampered\n\n**Master Admin Key:** `master-secret-key`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "currentToken",
+      "value": "",
+      "type": "string",
+      "description": "Auto-populated after any Login request. Used as Bearer token in all protected requests."
+    },
+    {
+      "key": "currentOtp",
+      "value": "",
+      "type": "string",
+      "description": "Auto-populated by Generate OTP request. Used in OTP login step 2."
+    },
+    {
+      "key": "masterAdminKey",
+      "value": "master-secret-key",
+      "type": "string",
+      "description": "Required for register/disable/enable/audit endpoints. Override via MASTER_ADMIN_KEY env var."
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Password Login",
+      "description": "Authenticate with username + password scoped to a service. Every attempt (success or failure) is written to login_audit. Response includes authMethod=PASSWORD and expiresAt.",
+      "item": [
+        {
+          "name": "Login as Alice (service-a) → ROLE_ADMIN",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const json = pm.response.json();",
+                  "    pm.collectionVariables.set('currentToken', json.accessToken);",
+                  "    console.log('[LOGIN] user=alice | authMethod:', json.authMethod, '| roles:', json.roles, '| expiresAt:', json.expiresAt);",
+                  "    pm.test('Response has accessToken', () => pm.expect(json.accessToken).to.be.a('string'));",
+                  "    pm.test('authMethod is PASSWORD', () => pm.expect(json.authMethod).to.eql('PASSWORD'));",
+                  "    pm.test('expiresAt present', () => pm.expect(json.expiresAt).to.be.a('string'));",
+                  "    pm.test('serviceId is service-a', () => pm.expect(json.serviceId).to.eql('service-a'));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"password123\",\n  \"serviceId\": \"service-a\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+            "description": "Alice: ROLE_ADMIN in service-a. Permissions: READ_ORDERS, WRITE_ORDERS, DELETE_ORDERS. Token saved to {{currentToken}}."
+          }
+        },
+        {
+          "name": "Login as Bob (service-a) → ROLE_USER",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const json = pm.response.json();",
+                  "    pm.collectionVariables.set('currentToken', json.accessToken);",
+                  "    console.log('[LOGIN] user=bob | authMethod:', json.authMethod, '| roles:', json.roles, '| permissions:', json.permissions);",
+                  "    pm.test('authMethod is PASSWORD', () => pm.expect(json.authMethod).to.eql('PASSWORD'));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"bob\",\n  \"password\": \"password123\",\n  \"serviceId\": \"service-a\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+            "description": "Bob: ROLE_USER in service-a. Permissions: READ_ORDERS only. Use Bob's token to test 403 on write/delete/admin endpoints."
+          }
+        },
+        {
+          "name": "Login as Charlie (service-b) → ROLE_ADMIN",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const json = pm.response.json();",
+                  "    pm.collectionVariables.set('currentToken', json.accessToken);",
+                  "    console.log('[LOGIN] user=charlie | serviceId:', json.serviceId, '| roles:', json.roles);",
+                  "    pm.test('serviceId is service-b', () => pm.expect(json.serviceId).to.eql('service-b'));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"charlie\",\n  \"password\": \"password123\",\n  \"serviceId\": \"service-b\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+            "description": "Charlie: ROLE_ADMIN in service-b. Permissions: READ_REPORTS, READ_USERS, MANAGE_USERS, DELETE_USERS."
+          }
+        },
+        {
+          "name": "Login as Diana (service-b) → ROLE_USER",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const json = pm.response.json();",
+                  "    pm.collectionVariables.set('currentToken', json.accessToken);",
+                  "    console.log('[LOGIN] user=diana | roles:', json.roles, '| permissions:', json.permissions);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"diana\",\n  \"password\": \"password123\",\n  \"serviceId\": \"service-b\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+            "description": "Diana: ROLE_USER in service-b. Permissions: READ_REPORTS + READ_USERS only. Use Diana's token to test 403 on delete-user endpoint."
+          }
+        },
+        {
+          "name": "Login - Wrong password (expect 400 + audit written)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Error message present', () => pm.expect(pm.response.json().error).to.include('Invalid credentials'));",
+                  "console.log('[AUDIT] This failed login is recorded in login_audit. Check via GET /auth/admin/audit');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"wrongpassword\",\n  \"serviceId\": \"service-a\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+            "description": "Should return 400. The failure is still recorded in login_audit with success=false and failureReason=Invalid credentials."
+          }
+        },
+        {
+          "name": "Login - Alice in wrong service (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "console.log('[AUDIT] Cross-service login attempt recorded in audit with serviceId=service-b');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"password123\",\n  \"serviceId\": \"service-b\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+            "description": "Alice is not registered in service-b. Returns 400 Invalid credentials."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. OTP Auth Flow",
+      "description": "Two-step OTP authentication. Generate → Login. The issued JWT carries authMethod=OTP. Both steps write to login_audit.\n\nIn production, Step 1 would send OTP via SMS/email and NOT return it in the response. Here it's returned for demo/testing.",
+      "item": [
+        {
+          "name": "Step 1 — Generate OTP (Alice, service-a)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const json = pm.response.json();",
+                  "    pm.collectionVariables.set('currentOtp', json.otp);",
+                  "    pm.test('OTP is 6 digits', () => pm.expect(json.otp).to.match(/^\\d{6}$/));",
+                  "    pm.test('expiresIn is 300 seconds', () => pm.expect(json.expiresIn).to.eql(300));",
+                  "    console.log('[OTP] Generated:', json.otp, '| Expires at:', json.expiresAt);",
+                  "    console.log('[OTP] Saved to {{currentOtp}} — use in Step 2');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"serviceId\": \"service-a\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/generate", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "generate"] },
+            "description": "Generates a 6-digit OTP. Valid for 5 minutes. Single-use — once consumed by login it cannot be reused. OTP auto-saved to {{currentOtp}} for Step 2.\n\nResponse fields: otp, expiresIn (seconds), expiresAt, username, serviceId, note."
+          }
+        },
+        {
+          "name": "Step 2 — OTP Login (Alice, service-a)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const json = pm.response.json();",
+                  "    pm.collectionVariables.set('currentToken', json.accessToken);",
+                  "    pm.test('authMethod is OTP', () => pm.expect(json.authMethod).to.eql('OTP'));",
+                  "    pm.test('Response has accessToken', () => pm.expect(json.accessToken).to.be.a('string'));",
+                  "    pm.test('expiresAt present', () => pm.expect(json.expiresAt).to.be.a('string'));",
+                  "    console.log('[OTP LOGIN] Success. authMethod:', json.authMethod, '| expiresAt:', json.expiresAt);",
+                  "    console.log('[AUDIT] OTP login recorded in login_audit with authMethod=OTP');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"serviceId\": \"service-a\",\n  \"otp\": \"{{currentOtp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/login", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "login"] },
+            "description": "Verifies the OTP and issues a JWT. The token will have authMethod=OTP in its claims (visible via /api/user/profile). Token saved to {{currentToken}}."
+          }
+        },
+        {
+          "name": "OTP Login - Wrong code (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Error is Invalid OTP', () => pm.expect(pm.response.json().error).to.include('Invalid OTP'));",
+                  "console.log('[AUDIT] Failed OTP attempt recorded in login_audit');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"serviceId\": \"service-a\",\n  \"otp\": \"000000\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/login", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "login"] },
+            "description": "Generate an OTP first, then submit 000000 instead. Should return 400 Invalid OTP. Failure is written to login_audit."
+          }
+        },
+        {
+          "name": "OTP Login - Reuse OTP after Step 2 (expect 400 — single use)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "console.log('[OTP] OTP is marked used=true after first login — cannot be reused');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"serviceId\": \"service-a\",\n  \"otp\": \"{{currentOtp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/login", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "login"] },
+            "description": "Run Steps 1+2 first, then run this again with the same OTP. The OTP is marked used=true after first login, so this returns 400 — No valid OTP found."
+          }
+        },
+        {
+          "name": "Profile after OTP login (shows authMethod=OTP)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    console.log('[OTP] Profile response — note the JWT was issued via OTP, but the claims look identical to password login');",
+                  "    console.log('[OTP] authMethod is embedded in the JWT and visible in login_audit');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{currentToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/user/profile", "host": ["{{baseUrl}}"], "path": ["api", "user", "profile"] },
+            "description": "Run after Step 2 OTP login. The profile response is identical to password login — Alice's roles and permissions are the same regardless of auth method."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Token Validate & Expiry",
+      "description": "Token introspection for other services. The validate endpoint now returns reason=OK, TOKEN_EXPIRED, or INVALID_TOKEN. The filter returns specific error codes directly on protected requests.",
+      "item": [
+        {
+          "name": "Validate Valid Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const json = pm.response.json();",
+                  "    pm.test('valid is true', () => pm.expect(json.valid).to.be.true);",
+                  "    pm.test('reason is OK', () => pm.expect(json.reason).to.eql('OK'));",
+                  "    pm.test('username present', () => pm.expect(json.username).to.be.a('string'));",
+                  "    pm.test('authMethod present', () => pm.expect(json.authMethod).to.be.a('string'));",
+                  "    console.log('[VALIDATE] valid=true | user:', json.username, '| authMethod:', json.authMethod, '| expires:', json.expiresAt);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{currentToken}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/token/validate", "host": ["{{baseUrl}}"], "path": ["auth", "token", "validate"] },
+            "description": "Login first to populate {{currentToken}}, then call this. Returns: valid, reason=OK, username, userId, serviceId, roles, permissions, authMethod, expiresAt.\n\nUsed by downstream services to validate tokens without sharing the JWT secret."
+          }
+        },
+        {
+          "name": "Validate Expired Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const json = pm.response.json();",
+                  "    pm.test('valid is false', () => pm.expect(json.valid).to.be.false);",
+                  "    pm.test('reason is TOKEN_EXPIRED', () => pm.expect(json.reason).to.eql('TOKEN_EXPIRED'));",
+                  "    pm.test('Claims still returned', () => pm.expect(json.username).to.be.a('string'));",
+                  "    console.log('[VALIDATE] Token expired for user:', json.username, '| expired at:', json.expiresAt);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbGljZSIsInVzZXJJZCI6MSwiZVhwaXJlZCI6dHJ1ZX0.EXPIRED\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/token/validate", "host": ["{{baseUrl}}"], "path": ["auth", "token", "validate"] },
+            "description": "Paste an expired JWT here. The validate endpoint returns valid=false, reason=TOKEN_EXPIRED, and still returns the claims (username, serviceId, roles) so the caller knows whose token it was.\n\nTo get a real expired token: set jwt.expiration=1 in application.properties, login, wait 1ms, then validate."
+          }
+        },
+        {
+          "name": "Validate Tampered Token (expect INVALID_TOKEN)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const json = pm.response.json();",
+                  "    pm.test('valid is false', () => pm.expect(json.valid).to.be.false);",
+                  "    pm.test('reason is INVALID_TOKEN', () => pm.expect(json.reason).to.eql('INVALID_TOKEN'));",
+                  "    console.log('[VALIDATE] Tampered token correctly rejected');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJoYWNrZXIifQ.bad_signature_here\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/token/validate", "host": ["{{baseUrl}}"], "path": ["auth", "token", "validate"] },
+            "description": "A JWT with bad/mismatched signature. Returns valid=false, reason=INVALID_TOKEN."
+          }
+        },
+        {
+          "name": "Expired Token on Protected Endpoint (expect 401 TOKEN_EXPIRED)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));",
+                  "if (pm.response.code === 401) {",
+                  "    const json = pm.response.json();",
+                  "    pm.test('code is TOKEN_EXPIRED', () => pm.expect(json.code).to.eql('TOKEN_EXPIRED'));",
+                  "    console.log('[FILTER] Token expired — filter returned 401 with code=TOKEN_EXPIRED before request reached controller');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer <paste-expired-token-here>" }],
+            "url": { "raw": "{{baseUrl}}/api/user/profile", "host": ["{{baseUrl}}"], "path": ["api", "user", "profile"] },
+            "description": "Replace the Authorization header with an expired token. The JwtAuthenticationFilter intercepts this BEFORE the request reaches the controller and returns:\n\n```json\n{ \"error\": \"Your token has expired. Please log in again.\", \"code\": \"TOKEN_EXPIRED\" }\n```\n\nThis is different from INVALID_TOKEN — the client knows to re-authenticate vs investigate a tampered token."
+          }
+        },
+        {
+          "name": "Tampered Token on Protected Endpoint (expect 401 INVALID_TOKEN)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));",
+                  "if (pm.response.code === 401) {",
+                  "    const json = pm.response.json();",
+                  "    pm.test('code is INVALID_TOKEN', () => pm.expect(json.code).to.eql('INVALID_TOKEN'));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJoYWNrZXIifQ.bad_sig" }],
+            "url": { "raw": "{{baseUrl}}/api/user/profile", "host": ["{{baseUrl}}"], "path": ["api", "user", "profile"] },
+            "description": "Sends a JWT with a bad signature. Filter returns 401 with code=INVALID_TOKEN."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Public (No Auth)",
+      "description": "Accessible without any token.",
+      "item": [
+        {
+          "name": "Public Hello",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns message', () => pm.expect(pm.response.json().message).to.be.a('string'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/public/hello", "host": ["{{baseUrl}}"], "path": ["api", "public", "hello"] },
+            "description": "No Authorization header needed. Open to all."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. User Profile (Any Authenticated)",
+      "description": "Requires any valid JWT. Profile response includes roles, permissions and serviceId extracted from the token.",
+      "item": [
+        {
+          "name": "My Profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const json = pm.response.json();",
+                  "    pm.test('username present', () => pm.expect(json.username).to.be.a('string'));",
+                  "    pm.test('serviceId present', () => pm.expect(json.serviceId).to.be.a('string'));",
+                  "    pm.test('roles is array', () => pm.expect(json.roles).to.be.an('array'));",
+                  "    pm.test('permissions is array', () => pm.expect(json.permissions).to.be.an('array'));",
+                  "    console.log('[PROFILE] user:', json.username, '| service:', json.serviceId, '| roles:', json.roles);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{currentToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/user/profile", "host": ["{{baseUrl}}"], "path": ["api", "user", "profile"] },
+            "description": "Returns: username, userId, serviceId, roles, permissions — all parsed from the JWT by the PermissionInterceptor. Works with any logged-in user (password or OTP)."
+          }
+        },
+        {
+          "name": "Profile - No Token (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403', () => pm.response.to.have.status(403));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/user/profile", "host": ["{{baseUrl}}"], "path": ["api", "user", "profile"] },
+            "description": "No token sent. Spring Security rejects unauthenticated access to /api/**."
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Admin Endpoints (ROLE_ADMIN)",
+      "description": "Requires ROLE_ADMIN in JWT. Alice (service-a) and Charlie (service-b) qualify. Bob and Diana do not.",
+      "item": [
+        {
+          "name": "Admin Dashboard — Alice token (expect 200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{currentToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/admin/dashboard", "host": ["{{baseUrl}}"], "path": ["api", "admin", "dashboard"] },
+            "description": "Login as Alice or Charlie first. @PreAuthorize(\"hasRole('ADMIN')\") enforced by Spring Security method security."
+          }
+        },
+        {
+          "name": "Admin Dashboard — Bob token (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403', () => pm.response.to.have.status(403));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{currentToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/admin/dashboard", "host": ["{{baseUrl}}"], "path": ["api", "admin", "dashboard"] },
+            "description": "Login as Bob first. Bob has ROLE_USER only. Spring Security's @PreAuthorize denies and returns 403."
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Service-A — Orders",
+      "description": "Permission-gated endpoints via @RequiresPermission.\nalice: READ + WRITE + DELETE_ORDERS\nbob: READ_ORDERS only",
+      "item": [
+        {
+          "name": "GET Orders (READ_ORDERS) — Alice or Bob: 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('orders array present', () => pm.expect(pm.response.json().orders).to.be.an('array'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{currentToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/service-a/orders", "host": ["{{baseUrl}}"], "path": ["api", "service-a", "orders"] },
+            "description": "@RequiresPermission(\"READ_ORDERS\"). Both alice and bob qualify."
+          }
+        },
+        {
+          "name": "POST Create Order (WRITE_ORDERS) — Alice: 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{currentToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"item\": \"Widget C\",\n  \"quantity\": 5\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/service-a/orders", "host": ["{{baseUrl}}"], "path": ["api", "service-a", "orders"] },
+            "description": "@RequiresPermission(\"WRITE_ORDERS\"). Login as Alice: 200. Login as Bob: 403."
+          }
+        },
+        {
+          "name": "POST Create Order (WRITE_ORDERS) — Bob: 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Error mentions permission', () => pm.expect(pm.response.json().error).to.include('WRITE_ORDERS'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{currentToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"item\": \"Widget D\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/service-a/orders", "host": ["{{baseUrl}}"], "path": ["api", "service-a", "orders"] },
+            "description": "Login as Bob first. Bob lacks WRITE_ORDERS. PermissionInterceptor returns 403 with the missing permission named."
+          }
+        },
+        {
+          "name": "DELETE Order (DELETE_ORDERS) — Alice: 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{currentToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/service-a/orders/ORD-001", "host": ["{{baseUrl}}"], "path": ["api", "service-a", "orders", "ORD-001"] },
+            "description": "@RequiresPermission(\"DELETE_ORDERS\"). Login as Alice: 200. Login as Bob: 403."
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Service-B — Reports & Users",
+      "description": "Permission-gated endpoints for service-b.\ncharlie: READ_REPORTS + READ/MANAGE/DELETE_USERS\ndiana: READ_REPORTS + READ_USERS only",
+      "item": [
+        {
+          "name": "GET Reports (READ_REPORTS) — Charlie or Diana: 200",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{currentToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/service-b/reports", "host": ["{{baseUrl}}"], "path": ["api", "service-b", "reports"] },
+            "description": "@RequiresPermission(\"READ_REPORTS\"). Both charlie and diana qualify."
+          }
+        },
+        {
+          "name": "GET Users (READ_USERS OR MANAGE_USERS) — Charlie or Diana: 200",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{currentToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/service-b/users", "host": ["{{baseUrl}}"], "path": ["api", "service-b", "users"] },
+            "description": "@RequiresPermission(value={\"READ_USERS\",\"MANAGE_USERS\"}, requireAll=false). Either permission is sufficient. Both charlie and diana qualify."
+          }
+        },
+        {
+          "name": "DELETE User (MANAGE_USERS AND DELETE_USERS) — Charlie: 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{currentToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/service-b/users/1", "host": ["{{baseUrl}}"], "path": ["api", "service-b", "users", "1"] },
+            "description": "@RequiresPermission(value={\"MANAGE_USERS\",\"DELETE_USERS\"}, requireAll=true). BOTH required. Login as Charlie: 200."
+          }
+        },
+        {
+          "name": "DELETE User — Diana: 403 (has READ_USERS but not MANAGE+DELETE)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403', () => pm.response.to.have.status(403));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{currentToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/service-b/users/1", "host": ["{{baseUrl}}"], "path": ["api", "service-b", "users", "1"] },
+            "description": "Login as Diana first. Diana lacks MANAGE_USERS and DELETE_USERS. requireAll=true means both are needed. Returns 403."
+          }
+        }
+      ]
+    },
+    {
+      "name": "9. Disable / Enable User",
+      "description": "Admin operations. Disabled users cannot log in — new attempts return 403. Existing tokens remain valid until expiry (JWT is stateless — to force-invalidate, reduce jwt.expiration or implement a token blacklist).",
+      "item": [
+        {
+          "name": "Disable Bob (service-a)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "console.log('[ADMIN] Bob disabled. His next login attempt will return 403.');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Admin-Key", "value": "{{masterAdminKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"bob\",\n  \"serviceId\": \"service-a\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/admin/users/disable", "host": ["{{baseUrl}}"], "path": ["auth", "admin", "users", "disable"] }
+          }
+        },
+        {
+          "name": "Login as Bob after disable (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Error is disabled', () => pm.expect(pm.response.json().error).to.include('disabled'));",
+                  "console.log('[AUDIT] Disabled login attempt recorded in login_audit with success=false, failureReason=User account is disabled');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"bob\",\n  \"password\": \"password123\",\n  \"serviceId\": \"service-a\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+            "description": "Run after Disable Bob. Returns 403 User account is disabled. The failure is still written to login_audit."
+          }
+        },
+        {
+          "name": "Enable Bob (service-a)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "console.log('[ADMIN] Bob re-enabled. Login will work again.');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Admin-Key", "value": "{{masterAdminKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"bob\",\n  \"serviceId\": \"service-a\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/admin/users/enable", "host": ["{{baseUrl}}"], "path": ["auth", "admin", "users", "enable"] }
+          }
+        },
+        {
+          "name": "Disable/Enable — Wrong Admin Key (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403', () => pm.response.to.have.status(403));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Admin-Key", "value": "wrong-key" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"bob\",\n  \"serviceId\": \"service-a\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/admin/users/disable", "host": ["{{baseUrl}}"], "path": ["auth", "admin", "users", "disable"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "10. Login Audit",
+      "description": "Only login events are recorded — never regular API requests. Each record contains: username, serviceId, authMethod (PASSWORD/OTP), success, failureReason, ipAddress, loginAt, tokenExpiresAt.",
+      "item": [
+        {
+          "name": "Last Login — Alice (service-a)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200 && pm.response.json()) {",
+                  "    const json = pm.response.json();",
+                  "    pm.test('success is true', () => pm.expect(json.success).to.be.true);",
+                  "    console.log('[AUDIT] Last login | user:', json.username, '| authMethod:', json.authMethod, '| at:', json.loginAt, '| ip:', json.ipAddress);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Admin-Key", "value": "{{masterAdminKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/auth/admin/audit/last-login?username=alice&serviceId=service-a",
+              "host": ["{{baseUrl}}"], "path": ["auth", "admin", "audit", "last-login"],
+              "query": [
+                { "key": "username", "value": "alice" },
+                { "key": "serviceId", "value": "service-a" }
+              ]
+            },
+            "description": "Most recent successful login for alice in service-a. Shows loginAt, ipAddress, authMethod, and tokenExpiresAt."
+          }
+        },
+        {
+          "name": "Full Audit Log — All events in service-a",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const json = pm.response.json();",
+                  "    console.log('[AUDIT] Total events in service-a:', json.totalElements, '| showing page:', json.number);",
+                  "    if (json.content && json.content.length > 0) {",
+                  "        json.content.forEach(e => console.log(' -', e.username, '|', e.authMethod, '|', e.success ? 'SUCCESS' : 'FAIL: ' + e.failureReason, '|', e.loginAt));",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Admin-Key", "value": "{{masterAdminKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/auth/admin/audit?serviceId=service-a&page=0&size=20",
+              "host": ["{{baseUrl}}"], "path": ["auth", "admin", "audit"],
+              "query": [
+                { "key": "serviceId", "value": "service-a" },
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "20" }
+              ]
+            },
+            "description": "Paginated audit log for all users in service-a, newest first. Run several logins (success + failure + OTP) first to populate data."
+          }
+        },
+        {
+          "name": "Audit Log — Alice only",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Admin-Key", "value": "{{masterAdminKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/auth/admin/audit?serviceId=service-a&username=alice&page=0&size=20",
+              "host": ["{{baseUrl}}"], "path": ["auth", "admin", "audit"],
+              "query": [
+                { "key": "serviceId", "value": "service-a" },
+                { "key": "username", "value": "alice" },
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "20" }
+              ]
+            },
+            "description": "Filtered to Alice's history only. You should see both PASSWORD and OTP authMethod entries if you've used both flows."
+          }
+        },
+        {
+          "name": "Audit Log — service-b (Charlie + Diana)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Admin-Key", "value": "{{masterAdminKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/auth/admin/audit?serviceId=service-b&page=0&size=20",
+              "host": ["{{baseUrl}}"], "path": ["auth", "admin", "audit"],
+              "query": [
+                { "key": "serviceId", "value": "service-b" },
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "20" }
+              ]
+            },
+            "description": "All login events for service-b. Each service has its own isolated audit view."
+          }
+        }
+      ]
+    },
+    {
+      "name": "11. Service Registration",
+      "description": "Dynamically onboard new services and users. Requires X-Admin-Key.",
+      "item": [
+        {
+          "name": "Register New Service",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Admin-Key", "value": "{{masterAdminKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"serviceId\": \"service-c\",\n  \"serviceName\": \"Service Gamma\",\n  \"clientSecret\": \"gamma-secret-123\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/register/service", "host": ["{{baseUrl}}"], "path": ["auth", "register", "service"] },
+            "description": "Registers a new service. After this, create roles/permissions for it (via DataInitializer or DB), then register users."
+          }
+        },
+        {
+          "name": "Register New Service — Wrong Key (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403', () => pm.response.to.have.status(403));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Admin-Key", "value": "wrong-key" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"serviceId\": \"service-x\",\n  \"serviceName\": \"Unauthorized\",\n  \"clientSecret\": \"bad\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/register/service", "host": ["{{baseUrl}}"], "path": ["auth", "register", "service"] }
+          }
+        },
+        {
+          "name": "Register New User (service-a)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Admin-Key", "value": "{{masterAdminKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"eve\",\n  \"email\": \"eve@example.com\",\n  \"password\": \"password123\",\n  \"serviceId\": \"service-a\",\n  \"roles\": [\"ROLE_USER\"],\n  \"permissions\": [\"READ_ORDERS\", \"WRITE_ORDERS\"]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/register/user", "host": ["{{baseUrl}}"], "path": ["auth", "register", "user"] },
+            "description": "Registers a user with specific roles and permissions. Roles/permissions must already exist for the service. Passwords are bcrypt-hashed at registration."
+          }
+        }
+      ]
+    },
+    {
+      "name": "12. Cross-Service Isolation",
+      "description": "A token issued for service-a cannot access service-b endpoints and vice versa. The PermissionInterceptor reads permissions from the JWT — cross-service permissions are never present in the token.",
+      "item": [
+        {
+          "name": "Alice (service-a token) → service-b/reports (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403', () => pm.response.to.have.status(403));",
+                  "console.log('[ISOLATION] Alice service-a token has no READ_REPORTS — that permission only exists in service-b');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{currentToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/service-b/reports", "host": ["{{baseUrl}}"], "path": ["api", "service-b", "reports"] },
+            "description": "Login as Alice (service-a) first. Her JWT contains only service-a permissions. READ_REPORTS is a service-b permission — not embedded in the token."
+          }
+        },
+        {
+          "name": "Charlie (service-b token) → service-a/orders (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403', () => pm.response.to.have.status(403));",
+                  "console.log('[ISOLATION] Charlie service-b token has no READ_ORDERS — that permission only exists in service-a');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{currentToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/service-a/orders", "host": ["{{baseUrl}}"], "path": ["api", "service-a", "orders"] },
+            "description": "Login as Charlie (service-b) first. His JWT contains only service-b permissions. READ_ORDERS is a service-a permission."
+          }
+        }
+      ]
+    }
+  ]
+}
