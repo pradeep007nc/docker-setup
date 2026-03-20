@@ -6,6 +6,11 @@ import dev.pradeep.dockerbackend.auth.dto.RegisterUserRequest;
 import dev.pradeep.dockerbackend.auth.dto.TokenResponse;
 import dev.pradeep.dockerbackend.auth.model.*;
 import dev.pradeep.dockerbackend.auth.repository.*;
+import dev.pradeep.dockerbackend.shared.exception.AccountDisabledException;
+import dev.pradeep.dockerbackend.shared.exception.DuplicateResourceException;
+import dev.pradeep.dockerbackend.shared.exception.InvalidCredentialsException;
+import dev.pradeep.dockerbackend.shared.exception.ResourceNotFoundException;
+import dev.pradeep.dockerbackend.shared.exception.ServiceDisabledException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -44,21 +49,21 @@ public class AuthService {
 
         try {
             AppService service = serviceRepository.findByServiceId(serviceId)
-                    .orElseThrow(() -> new IllegalArgumentException("Service not found: " + serviceId));
+                    .orElseThrow(() -> new ResourceNotFoundException("Service not found: " + serviceId));
 
             if (!service.isActive()) {
-                throw new IllegalStateException("Service is disabled: " + serviceId);
+                throw new ServiceDisabledException("Service is disabled: " + serviceId);
             }
 
             AppUser user = userRepository.findByUsernameAndService(username, service)
-                    .orElseThrow(() -> new IllegalArgumentException("Invalid credentials"));
+                    .orElseThrow(() -> new InvalidCredentialsException("Invalid credentials"));
 
             if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-                throw new IllegalArgumentException("Invalid credentials");
+                throw new InvalidCredentialsException("Invalid credentials");
             }
 
             if (!user.isActive()) {
-                throw new IllegalStateException("User account is disabled");
+                throw new AccountDisabledException("User account is disabled");
             }
 
             TokenResponse response = buildTokenResponse(user, service, "PASSWORD");
@@ -84,7 +89,7 @@ public class AuthService {
 
         try {
             if (!user.isActive()) {
-                throw new IllegalStateException("User account is disabled");
+                throw new AccountDisabledException("User account is disabled");
             }
             TokenResponse response = buildTokenResponse(user, service, "OTP");
             recordAudit(user.getUsername(), service.getServiceId(), "OTP", true, null, ipAddress, response.getExpiresAt());
@@ -127,9 +132,9 @@ public class AuthService {
     @Transactional
     public void setUserActive(String username, String serviceId, boolean active) {
         AppService service = serviceRepository.findByServiceId(serviceId)
-                .orElseThrow(() -> new IllegalArgumentException("Service not found: " + serviceId));
+                .orElseThrow(() -> new ResourceNotFoundException("Service not found: " + serviceId));
         AppUser user = userRepository.findByUsernameAndService(username, service)
-                .orElseThrow(() -> new IllegalArgumentException("User not found: " + username));
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + username));
         user.setActive(active);
         userRepository.save(user);
     }
@@ -152,7 +157,7 @@ public class AuthService {
     @Transactional
     public void registerService(RegisterServiceRequest request) {
         if (serviceRepository.existsByServiceId(request.getServiceId())) {
-            throw new IllegalArgumentException("Service already registered: " + request.getServiceId());
+            throw new DuplicateResourceException("Service already registered: " + request.getServiceId());
         }
         AppService service = new AppService();
         service.setServiceId(request.getServiceId());
@@ -164,10 +169,10 @@ public class AuthService {
     @Transactional
     public void registerUser(RegisterUserRequest request) {
         AppService service = serviceRepository.findByServiceId(request.getServiceId())
-                .orElseThrow(() -> new IllegalArgumentException("Service not found: " + request.getServiceId()));
+                .orElseThrow(() -> new ResourceNotFoundException("Service not found: " + request.getServiceId()));
 
         if (userRepository.existsByUsernameAndService(request.getUsername(), service)) {
-            throw new IllegalArgumentException("Username already exists in service: " + request.getServiceId());
+            throw new DuplicateResourceException("Username already exists in service: " + request.getServiceId());
         }
 
         AppUser user = new AppUser();
@@ -180,7 +185,7 @@ public class AuthService {
         if (request.getRoles() != null) {
             for (String roleName : request.getRoles()) {
                 Role role = roleRepository.findByRoleNameAndService(roleName, service)
-                        .orElseThrow(() -> new IllegalArgumentException("Role not found: " + roleName));
+                        .orElseThrow(() -> new ResourceNotFoundException("Role not found: " + roleName));
                 UserRole ur = new UserRole();
                 ur.setUser(user); ur.setRole(role); ur.setService(service);
                 userRoleRepository.save(ur);
@@ -190,7 +195,7 @@ public class AuthService {
         if (request.getPermissions() != null) {
             for (String permName : request.getPermissions()) {
                 Permission permission = permissionRepository.findByPermissionNameAndService(permName, service)
-                        .orElseThrow(() -> new IllegalArgumentException("Permission not found: " + permName));
+                        .orElseThrow(() -> new ResourceNotFoundException("Permission not found: " + permName));
                 UserPermission up = new UserPermission();
                 up.setUser(user); up.setPermission(permission); up.setService(service);
                 userPermissionRepository.save(up);

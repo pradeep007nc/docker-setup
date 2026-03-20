@@ -6,6 +6,10 @@ import dev.pradeep.dockerbackend.auth.model.OtpRequest;
 import dev.pradeep.dockerbackend.auth.repository.AppServiceRepository;
 import dev.pradeep.dockerbackend.auth.repository.AppUserRepository;
 import dev.pradeep.dockerbackend.auth.repository.OtpRequestRepository;
+import dev.pradeep.dockerbackend.shared.exception.AccountDisabledException;
+import dev.pradeep.dockerbackend.shared.exception.InvalidCredentialsException;
+import dev.pradeep.dockerbackend.shared.exception.InvalidOtpException;
+import dev.pradeep.dockerbackend.shared.exception.ResourceNotFoundException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,13 +36,13 @@ public class OtpService {
     @Transactional
     public Map<String, Object> generateOtp(String username, String serviceId) {
         AppService service = serviceRepository.findByServiceId(serviceId)
-                .orElseThrow(() -> new IllegalArgumentException("Service not found: " + serviceId));
+                .orElseThrow(() -> new ResourceNotFoundException("Service not found: " + serviceId));
 
         AppUser user = userRepository.findByUsernameAndService(username, service)
-                .orElseThrow(() -> new IllegalArgumentException("User not found in service: " + serviceId));
+                .orElseThrow(() -> new ResourceNotFoundException("User not found in service: " + serviceId));
 
         if (!user.isActive()) {
-            throw new IllegalStateException("User account is disabled");
+            throw new AccountDisabledException("User account is disabled");
         }
 
         String otp = String.format("%06d", RANDOM.nextInt(1_000_000));
@@ -68,22 +72,22 @@ public class OtpService {
     @Transactional
     public OtpValidationResult validateOtp(String username, String serviceId, String otpCode) {
         AppService service = serviceRepository.findByServiceId(serviceId)
-                .orElseThrow(() -> new IllegalArgumentException("Service not found: " + serviceId));
+                .orElseThrow(() -> new ResourceNotFoundException("Service not found: " + serviceId));
 
         AppUser user = userRepository.findByUsernameAndService(username, service)
-                .orElseThrow(() -> new IllegalArgumentException("Invalid credentials"));
+                .orElseThrow(() -> new InvalidCredentialsException("Invalid credentials"));
 
         if (!user.isActive()) {
-            throw new IllegalStateException("User account is disabled");
+            throw new AccountDisabledException("User account is disabled");
         }
 
         OtpRequest otpRequest = otpRequestRepository
                 .findTopByUserAndServiceAndUsedFalseAndExpiresAtAfterOrderByCreatedAtDesc(
                         user, service, LocalDateTime.now())
-                .orElseThrow(() -> new IllegalArgumentException("No valid OTP found — generate a new one"));
+                .orElseThrow(() -> new InvalidOtpException("No valid OTP found — generate a new one"));
 
         if (!otpRequest.getOtpCode().equals(otpCode)) {
-            throw new IllegalArgumentException("Invalid OTP");
+            throw new InvalidOtpException("Invalid OTP");
         }
 
         otpRequest.setUsed(true);
