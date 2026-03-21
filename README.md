@@ -1,155 +1,402 @@
-1# Dockerized Spring Boot Backend
+# Dockerized Spring Boot Backend
 
-This project is a containerized Spring Boot application (`dockerbackend`) integrated with a MySQL database using Docker and Docker Compose. This guide provides a deep dive into how the Docker configuration works, the purpose of each command, and how to manage the system.
-
----
-
-## 🚀 How the Docker Configuration Works
-
-The project uses a **multi-container architecture**. Instead of installing Java or MySQL on your local machine, you use Docker to create isolated environments (containers) for each part of the system.
-
-### The Two Pillars:
-1.  **Images:** The "blueprints" for your containers. They contain the OS, runtime (Java), and your application code/dependencies.
-2.  **Containers:** The "running instances" of those images.
-
-### System Overview:
-- **`backend` service:** Runs the Spring Boot application.
-- **`db` service:** Runs the MySQL database.
-- **Docker Network:** Docker Compose automatically creates a private network where the `backend` can talk to the `db` using the hostname `db`.
-- **Docker Volumes:** Used to persist database data even if the container is deleted.
+A containerized Spring Boot authentication backend integrated with MySQL using Docker and Docker Compose. The system supports **multi-service authentication** — multiple independent services can register, each with its own users, roles, and permissions, all managed through a central auth server.
 
 ---
 
-## 📄 Dockerfile Breakdown
+## System Architecture
 
-The `Dockerfile` uses a **Multi-Stage Build**. This keeps the final production image small and secure by excluding build tools like Maven.
+```
+┌─────────────────────────────────────────────────┐
+│                  Auth Server                    │
+│                                                 │
+│  service-a ──► roles/permissions ──► users      │
+│  service-b ──► roles/permissions ──► users      │
+│  service-n ──► roles/permissions ──► users      │
+│                                                 │
+│  JWT issued per user, scoped to their service   │
+└─────────────────────────────────────────────────┘
+```
 
-| Command | Meaning |
-| :--- | :--- |
-| `FROM maven:3.9.6-eclipse-temurin-17 AS build` | Starts the "Build Stage" using a Maven image with Java 17. |
-| `WORKDIR /app` | Sets the working directory inside the container to `/app`. |
-| `COPY pom.xml .` | Copies only the `pom.xml` first to leverage Docker's layer caching. |
-| `RUN mvn dependency:go-offline -B` | Downloads all dependencies. If `pom.xml` doesn't change, Docker skips this in future builds. |
-| `COPY src ./src` | Copies your source code into the container. |
-| `RUN mvn package -DskipTests` | Compiles and packages the app into a `.jar` file. |
-| `FROM eclipse-temurin:17-jre` | Starts the "Final Stage" using a tiny JRE image (no compiler, just the runner). |
-| `COPY --from=build /app/target/*.jar app.jar` | Copies only the final artifact from the build stage to this clean image. |
-| `EXPOSE 8080` | Documents that the container listens on port 8080. |
-| `ENTRYPOINT ["java", "-jar", "app.jar"]` | The command that runs when the container starts. |
-
----
-
-## 🎼 Docker Compose Breakdown
-
-`docker-compose.yml` orchestrates multiple containers so they work together seamlessly.
-
-### Services:
-- **`db`:**
-    - `build: ../docker-db`: Builds the database image from a local directory.
-    - `environment`: Sets MySQL credentials (`MYSQL_DATABASE`, `MYSQL_USER`, etc.).
-    - `volumes`: Maps `db_data` (a Docker volume) to `/var/lib/mysql` inside the container so your data isn't lost when the container stops.
-    - `healthcheck`: Tests if MySQL is actually ready to accept connections.
-- **`backend`:**
-    - `build: .`: Builds the image using the `Dockerfile` in the current directory.
-    - `depends_on`: Ensures the backend only starts after the `db` healthcheck passes.
-    - `environment`: Overrides Spring Boot's `application.properties` with the container-specific database URL (`jdbc:mysql://db:3306/...`).
+Each service is an isolated tenant. Users, roles, and permissions are always scoped to a service — a user in `service-a` cannot authenticate against `service-b`.
 
 ---
 
-## 🛠️ How to Build and Run
+## Docker Setup
 
-### 1. Build and Start Everything
-Run this command from the root directory:
+### Multi-Container Architecture
+
+| Container | Purpose |
+|---|---|
+| `backend` | Spring Boot application |
+| `db` | MySQL database |
+
+Docker Compose creates a private network so `backend` talks to `db` by hostname.
+
+### Build and Run
+
 ```bash
+# Build images and start all containers
 docker-compose up --build
-```
-*The `--build` flag ensures your latest code changes are re-compiled into the image.*
 
-### 2. Run in Detached Mode (Background)
-```bash
+# Run in background
 docker-compose up -d
-```
 
-### 3. Stop and Remove Containers
-```bash
+# Stop containers (data is preserved in volume)
 docker-compose down
-```
-*Note: This stops the app but keeps your database data safe in the volume.*
 
-### 4. Remove Everything (Including Data)
-```bash
+# Stop and delete all data
 docker-compose down -v
 ```
 
----
+### View Logs
 
-## 🎨 Customization Variations
-
-### Change Database Credentials
-Update the `environment` section in `docker-compose.yml`. The Spring Boot app automatically picks these up because of the variable mapping in `application.properties`:
-```properties
-spring.datasource.username=${SPRING_DATASOURCE_USERNAME}
+```bash
+docker-compose logs -f
 ```
 
-### Change Ports
-If port `8080` is busy on your machine, change the **mapping** in `docker-compose.yml`:
-```yaml
-ports:
-  - "9090:8080" # Host Port 9090 -> Container Port 8080
-```
+### Enter the running backend container
 
-### Resource Limits (Production style)
-You can limit how much CPU/RAM the containers use:
-```yaml
-backend:
-  deploy:
-    resources:
-      limits:
-        cpus: '0.5'
-        memory: 512M
+```bash
+docker-compose exec backend /bin/sh
 ```
 
 ---
 
-## 🌐 Multi-Server & Remote Networking
+## Configuration
 
-If you decide to move your database to a **different server** (e.g., an RDS instance on AWS or a standalone MySQL server), the internal Docker network hostname `db` will no longer work. Here is how to configure it:
+All sensitive values are injected via environment variables. The defaults in `application.properties` are for local development only — always override in production.
 
-### 1. Update the Connection String
-In your `docker-compose.yml`, change the `SPRING_DATASOURCE_URL` from the service name (`db`) to the **Public IP** or **Domain Name** of the remote server:
+| Environment Variable | Default | Description |
+|---|---|---|
+| `SPRING_DATASOURCE_URL` | `jdbc:mysql://localhost:3306/dockerdb` | Database connection URL |
+| `SPRING_DATASOURCE_USERNAME` | `root` | DB username |
+| `SPRING_DATASOURCE_PASSWORD` | `rootpassword` | DB password |
+| `JWT_SECRET` | *(base64 default)* | JWT signing secret (min 256-bit) |
+| `JWT_EXPIRATION` | `86400000` | Token expiry in milliseconds (24h) |
+| `MASTER_ADMIN_KEY` | `master-secret-key` | Master key for all admin API calls |
 
-```yaml
-# Example for a remote server
-environment:
-  - SPRING_DATASOURCE_URL=jdbc:mysql://203.0.113.10:3306/dockerdb
-```
+Set these in a `.env` file for multi-environment setups:
 
-### 2. External Network Configuration
-If you want your container to communicate with services outside its local network, you may need to:
-- **Allow Remote Access in MySQL:** Ensure your MySQL server allows connections from the backend server's IP.
-- **Firewall Rules:** Open port `3306` on the database server's firewall.
-- **Docker Host Networking:** In rare cases, you might use `network_mode: "host"` in `docker-compose.yml` to make the container share the host's IP directly, though this is less secure.
-
-### 3. Using Environment Files (.env)
-For multi-environment setups (Dev, Staging, Prod), create a `.env` file to keep your `docker-compose.yml` clean:
 ```env
-# .env file
-DB_HOST=my-production-db.com
-DB_USER=admin
-DB_PASS=securepassword
-```
-Then reference them in `docker-compose.yml`:
-```yaml
-environment:
-  - SPRING_DATASOURCE_URL=jdbc:mysql://${DB_HOST}:3306/dockerdb
+MASTER_ADMIN_KEY=your-secure-admin-key
+JWT_SECRET=your-base64-encoded-secret
+SPRING_DATASOURCE_PASSWORD=your-db-password
 ```
 
 ---
 
-## 🔍 Troubleshooting
-- **Logs:** View logs with `docker-compose logs -f`.
-- **Database Access:** You can connect to the DB from your host machine (IntelliJ/DBeaver) using `localhost:3306`.
-- **Internal Shell:** To "enter" the running backend container:
-  ```bash
-  docker-compose exec backend /bin/sh
-  ```
+## Seed Data (Auto-loaded on startup)
+
+The application seeds two services with users on first boot:
+
+### service-a (Service Alpha)
+
+| User | Password | Role | Permissions |
+|---|---|---|---|
+| `alice` | `password123` | `ROLE_ADMIN` | `READ_ORDERS`, `WRITE_ORDERS`, `DELETE_ORDERS` |
+| `bob` | `password123` | `ROLE_USER` | `READ_ORDERS` |
+
+### service-b (Service Beta)
+
+| User | Password | Role | Permissions |
+|---|---|---|---|
+| `charlie` | `password123` | `ROLE_ADMIN` | `READ_REPORTS`, `READ_USERS`, `MANAGE_USERS`, `DELETE_USERS` |
+| `diana` | `password123` | `ROLE_USER` | `READ_REPORTS`, `READ_USERS` |
+
+---
+
+## Auth API Reference
+
+All admin endpoints require the header:
+```
+X-Admin-Key: <MASTER_ADMIN_KEY>
+```
+
+All protected endpoints require:
+```
+Authorization: Bearer <jwt-token>
+```
+
+---
+
+### 1. Register a Service
+
+Before registering users, a service must be registered. Services are the top-level tenants.
+
+```
+POST /auth/register/service
+Header: X-Admin-Key: master-secret-key
+```
+
+```json
+{
+  "serviceId": "order-service",
+  "serviceName": "Order Management Service",
+  "clientSecret": "a-strong-client-secret"
+}
+```
+
+**Response:**
+```json
+{ "message": "Service registered: order-service" }
+```
+
+> `serviceId` must be unique across the system. `clientSecret` is stored hashed.
+
+---
+
+### 2. Register a User
+
+Users are always scoped to a specific service. Roles and permissions are assigned at registration time — they must already exist in the database for that service.
+
+```
+POST /auth/register/user
+Header: X-Admin-Key: master-secret-key
+```
+
+```json
+{
+  "username": "alice",
+  "email": "alice@example.com",
+  "password": "password123",
+  "serviceId": "order-service",
+  "roles": ["ROLE_ADMIN"],
+  "permissions": ["READ_ORDERS", "WRITE_ORDERS"]
+}
+```
+
+**Response:**
+```json
+{ "message": "User registered: alice" }
+```
+
+> `roles` and `permissions` are optional. If provided, they must exist in the database scoped to the given `serviceId`.
+
+---
+
+### 3. Login (Password)
+
+```
+POST /auth/login
+```
+
+```json
+{
+  "username": "alice",
+  "password": "password123",
+  "serviceId": "order-service"
+}
+```
+
+**Response:**
+```json
+{
+  "token": "<jwt>",
+  "tokenType": "Bearer",
+  "roles": ["ROLE_ADMIN"],
+  "permissions": ["READ_ORDERS", "WRITE_ORDERS"],
+  "serviceId": "order-service",
+  "authMethod": "PASSWORD",
+  "expiresAt": "2026-03-22T10:00:00"
+}
+```
+
+Every login attempt (success or failure) is recorded in the `login_audit` table.
+
+---
+
+### 4. Login (OTP — Two Step)
+
+**Step 1 — Request OTP:**
+
+```
+POST /auth/otp/generate
+```
+
+```json
+{
+  "username": "alice",
+  "serviceId": "order-service"
+}
+```
+
+> In development, the OTP is returned in the response. In production it would be delivered via SMS/email.
+
+**Step 2 — Submit OTP to get JWT:**
+
+```
+POST /auth/otp/login
+```
+
+```json
+{
+  "username": "alice",
+  "serviceId": "order-service",
+  "otp": "482910"
+}
+```
+
+OTPs expire after 5 minutes and are single-use.
+
+---
+
+### 5. Validate a Token
+
+Used by downstream services to verify tokens issued by this auth server.
+
+```
+POST /auth/token/validate
+```
+
+```json
+{ "token": "<jwt>" }
+```
+
+**Response (valid):**
+```json
+{
+  "valid": true,
+  "reason": "OK",
+  "username": "alice",
+  "userId": 1,
+  "serviceId": "order-service",
+  "roles": ["ROLE_ADMIN"],
+  "permissions": ["READ_ORDERS", "WRITE_ORDERS"],
+  "authMethod": "PASSWORD",
+  "expiresAt": "2026-03-22T10:00:00"
+}
+```
+
+**Response (expired):**
+```json
+{
+  "valid": false,
+  "reason": "TOKEN_EXPIRED",
+  "username": "alice",
+  ...
+}
+```
+
+---
+
+### 6. Disable / Enable a User
+
+Disabled users cannot log in. Existing tokens remain valid until they expire naturally.
+
+```
+PATCH /auth/admin/users/disable
+Header: X-Admin-Key: master-secret-key
+```
+
+```json
+{ "username": "bob", "serviceId": "order-service" }
+```
+
+```
+PATCH /auth/admin/users/enable
+Header: X-Admin-Key: master-secret-key
+```
+
+```json
+{ "username": "bob", "serviceId": "order-service" }
+```
+
+---
+
+### 7. Audit Log
+
+**Paginated login history for a service:**
+
+```
+GET /auth/admin/audit?serviceId=order-service&page=0&size=20
+Header: X-Admin-Key: master-secret-key
+```
+
+Filter by user:
+```
+GET /auth/admin/audit?serviceId=order-service&username=alice
+```
+
+**Last successful login for a user:**
+
+```
+GET /auth/admin/audit/last-login?username=alice&serviceId=order-service
+Header: X-Admin-Key: master-secret-key
+```
+
+---
+
+## Permission Enforcement
+
+Endpoints are protected using the `@RequiresPermission` annotation:
+
+```java
+@GetMapping("/orders")
+@RequiresPermission("READ_ORDERS")
+public ResponseEntity<?> getOrders() { ... }
+
+// Require ALL listed permissions
+@DeleteMapping("/orders/{id}")
+@RequiresPermission(value = {"WRITE_ORDERS", "DELETE_ORDERS"}, requireAll = true)
+public ResponseEntity<?> deleteOrder(@PathVariable Long id) { ... }
+```
+
+Permissions are extracted from the JWT on every request — no database call at runtime. Roles are enforced at the Spring Security filter chain level.
+
+---
+
+## Full Setup Walkthrough
+
+Here is the complete sequence to onboard a new service from scratch:
+
+```bash
+BASE=http://localhost:8080
+KEY=master-secret-key
+
+# 1. Register the service
+curl -s -X POST $BASE/auth/register/service \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Key: $KEY" \
+  -d '{"serviceId":"order-service","serviceName":"Order Service","clientSecret":"strong-secret"}'
+
+# NOTE: Roles and permissions for this service must be seeded directly into the
+# database (roles and permissions tables) before registering users that use them.
+# There is currently no API endpoint for creating roles/permissions — this is by design
+# so that permission definitions are controlled at the infrastructure level, not via API.
+
+# 2. Register a user (roles/permissions must already exist in DB for this service)
+curl -s -X POST $BASE/auth/register/user \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Key: $KEY" \
+  -d '{
+    "username": "alice",
+    "email": "alice@example.com",
+    "password": "password123",
+    "serviceId": "order-service",
+    "roles": ["ROLE_ADMIN"],
+    "permissions": ["READ_ORDERS", "WRITE_ORDERS"]
+  }'
+
+# 3. Login
+curl -s -X POST $BASE/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"alice","password":"password123","serviceId":"order-service"}'
+
+# 4. Use the token
+curl -s $BASE/your-protected-endpoint \
+  -H "Authorization: Bearer <token-from-step-3>"
+```
+
+---
+
+## Troubleshooting
+
+| Issue | Fix |
+|---|---|
+| Backend can't reach DB | Check `docker-compose logs db` — DB may still be starting up |
+| `Invalid admin key` | Ensure `X-Admin-Key` matches `MASTER_ADMIN_KEY` env var |
+| `Service not found` | Register the service first before registering users |
+| `Role not found` | Seed the role into the DB for the target service before registering users |
+| Port 8080 in use | Change the host port in `docker-compose.yml`: `"9090:8080"` |
+| Connect to DB from host | Use `localhost:3306` from IntelliJ/DBeaver while containers are running |
