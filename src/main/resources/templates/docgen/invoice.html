@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <title>Invoice</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            font-size: 13px;
+            color: #2d2d2d;
+            background: #fff;
+        }
+
+        /* ── Header ── */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 32px 0 24px;
+            border-bottom: 3px solid #1a73e8;
+            margin-bottom: 28px;
+        }
+        .company-name {
+            font-size: 24px;
+            font-weight: 700;
+            color: #1a73e8;
+            letter-spacing: -0.5px;
+        }
+        .company-meta {
+            font-size: 12px;
+            color: #666;
+            margin-top: 6px;
+            line-height: 1.7;
+        }
+        .invoice-badge {
+            text-align: right;
+        }
+        .invoice-badge h1 {
+            font-size: 32px;
+            font-weight: 700;
+            color: #1a73e8;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+        .invoice-number {
+            font-size: 13px;
+            color: #555;
+            margin-top: 4px;
+        }
+
+        /* ── Meta grid ── */
+        .meta-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-bottom: 28px;
+        }
+        .meta-box {
+            background: #f7f9fc;
+            border-radius: 8px;
+            padding: 16px 20px;
+            border-left: 4px solid #1a73e8;
+        }
+        .meta-box h3 {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #888;
+            margin-bottom: 8px;
+        }
+        .meta-box p {
+            font-size: 13px;
+            color: #333;
+            line-height: 1.7;
+        }
+        .meta-box .value {
+            font-weight: 600;
+            color: #1a1a1a;
+        }
+
+        /* ── Dates row ── */
+        .dates-row {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 28px;
+        }
+        .date-chip {
+            background: #e8f0fe;
+            border-radius: 6px;
+            padding: 8px 16px;
+            font-size: 12px;
+            color: #333;
+        }
+        .date-chip span {
+            font-weight: 600;
+            color: #1a73e8;
+        }
+
+        /* ── Items table ── */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 24px;
+        }
+        thead tr {
+            background: #1a73e8;
+            color: #fff;
+        }
+        thead th {
+            padding: 11px 14px;
+            text-align: left;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.4px;
+        }
+        thead th:last-child, tbody td:last-child {
+            text-align: right;
+        }
+        tbody tr:nth-child(even) { background: #f7f9fc; }
+        tbody tr:hover { background: #eef3fd; }
+        tbody td {
+            padding: 10px 14px;
+            border-bottom: 1px solid #e8ecf0;
+            font-size: 13px;
+        }
+
+        /* ── Totals ── */
+        .totals-wrapper {
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 32px;
+        }
+        .totals-box {
+            width: 300px;
+        }
+        .totals-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            font-size: 13px;
+            color: #555;
+            border-bottom: 1px solid #eee;
+        }
+        .totals-row.grand {
+            background: #1a73e8;
+            color: #fff;
+            padding: 10px 14px;
+            border-radius: 6px;
+            margin-top: 6px;
+            font-size: 15px;
+            font-weight: 700;
+            border: none;
+        }
+
+        /* ── Notes ── */
+        .notes {
+            background: #fffbea;
+            border-left: 4px solid #f9ab00;
+            border-radius: 4px;
+            padding: 12px 16px;
+            font-size: 12px;
+            color: #555;
+            margin-bottom: 32px;
+        }
+        .notes strong { color: #333; }
+
+        /* ── Footer ── */
+        .footer {
+            border-top: 1px solid #e0e0e0;
+            padding-top: 16px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: #aaa;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <div class="header">
+        <div>
+            <div class="company-name" th:text="${companyName}">Company Name</div>
+            <div class="company-meta">
+                <span th:text="${companyEmail}">email@company.com</span><br/>
+                <span th:text="${companyPhone}">+00 00000 00000</span>
+            </div>
+        </div>
+        <div class="invoice-badge">
+            <h1>Invoice</h1>
+            <div class="invoice-number"># <span th:text="${invoiceNumber}">INV-0000</span></div>
+        </div>
+    </div>
+
+    <!-- Bill To / Invoice Info -->
+    <div class="meta-grid">
+        <div class="meta-box">
+            <h3>Bill To</h3>
+            <p class="value" th:text="${customerName}">Customer Name</p>
+            <p th:text="${customerEmail}">customer@email.com</p>
+            <p th:text="${customerAddress}">Customer Address</p>
+        </div>
+        <div class="meta-box">
+            <h3>Invoice Details</h3>
+            <p>Invoice Date &nbsp;<span class="value" th:text="${invoiceDate}">01 Jan 2026</span></p>
+            <p>Due Date &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="value" th:text="${dueDate}">31 Jan 2026</span></p>
+        </div>
+    </div>
+
+    <!-- Items Table -->
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Description</th>
+                <th>Qty</th>
+                <th>Rate (₹)</th>
+                <th>Amount (₹)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr th:each="item, stat : ${items}">
+                <td th:text="${stat.index + 1}">1</td>
+                <td th:text="${item.description}">Item</td>
+                <td th:text="${item.quantity}">1</td>
+                <td th:text="${item.rate}">0.00</td>
+                <td th:text="${item.total}">0.00</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <!-- Totals -->
+    <div class="totals-wrapper">
+        <div class="totals-box">
+            <div class="totals-row">
+                <span>Subtotal</span>
+                <span>₹ <span th:text="${subtotal}">0.00</span></span>
+            </div>
+            <div class="totals-row">
+                <span>GST (<span th:text="${taxRate}">18%</span>)</span>
+                <span>₹ <span th:text="${taxAmount}">0.00</span></span>
+            </div>
+            <div class="totals-row grand">
+                <span>Total Due</span>
+                <span>₹ <span th:text="${grandTotal}">0.00</span></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notes -->
+    <div class="notes" th:if="${notes}">
+        <strong>Notes: </strong><span th:text="${notes}"></span>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+        <span>Generated by <strong th:text="${companyName}">Company</strong></span>
+        <span>This is a computer-generated document and does not require a signature.</span>
+    </div>
+
+</body>
+</html>

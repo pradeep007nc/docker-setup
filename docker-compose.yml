@@ -9,8 +9,8 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     # DB port is NOT exposed to the host in production.
     # Uncomment below to connect from a local DB client (dev only):
-    # ports:
-    #   - "${DB_PORT}:3306"
+    ports:
+      - "${DB_PORT}:3306"
     volumes:
       - db_data:/var/lib/mysql
     healthcheck:

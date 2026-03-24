@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <title>Report</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #2d2d2d; }
+
+        .header {
+            background: #1a73e8;
+            color: #fff;
+            padding: 28px 32px;
+            border-radius: 0 0 12px 12px;
+            margin-bottom: 32px;
+        }
+        .header h1 { font-size: 26px; font-weight: 700; }
+        .header p  { font-size: 12px; opacity: 0.8; margin-top: 4px; }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+        .stat-card {
+            background: #f7f9fc;
+            border-radius: 8px;
+            padding: 20px 24px;
+            border-left: 4px solid #1a73e8;
+        }
+        .stat-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #888; }
+        .stat-card .value { font-size: 28px; font-weight: 700; color: #1a73e8; margin-top: 6px; }
+
+        .footer { margin-top: 32px; font-size: 11px; color: #aaa; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1 th:text="${reportTitle}">Report</h1>
+        <p>Generated on <span th:text="${reportDate}">01 Jan 2026</span> by <span th:text="${generatedBy}">System</span></p>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="label">Total Users</div>
+            <div class="value" th:text="${totalUsers}">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Active Users</div>
+            <div class="value" th:text="${activeUsers}">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Total Requests</div>
+            <div class="value" th:text="${totalRequests}">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Failed Requests</div>
+            <div class="value" th:text="${failedRequests}">0</div>
+        </div>
+    </div>
+
+    <div class="footer">This is a computer-generated report.</div>
+</body>
+</html>
